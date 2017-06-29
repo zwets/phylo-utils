@@ -29,8 +29,44 @@ parse_error() {
     err_exit "parse error${1:+: $1} at: ${TOK}${BUF}"
 }
 
-# Parser functions to traverse the tree
-# - Newick BNF syntax (condensed from Wikipedia entry)
+# Function to show usage information and exit
+usage_exit() {
+    echo "
+Usage: $(basename "$0") [OPTIONS] [FILE [RULES]]
+
+  Read phylogenetic TREE from Newick format FILE, apply the rewrite rules
+  from file RULES to the node labels of TREE, and write the resulting tree
+  to standard output.  When RULES is absent or '-', read rules from standard
+  input.  When FILE is absent or '-' read TREE from standard input.
+  
+  RULES must have lines of colon-separated values OLD:NEW.  OLD is an
+  extended regex(7) whose anchored match with any label of the tree is
+  changed to NEW.  By 'anchored' is meant that OLD is interpreted as ^OLD\$,
+  in other words, it must match the whole label.  NEW may be any string not 
+  containing characters that Newick disallows (notably (),:;), and may have
+  backreferences \\1..\\9 as with the substitute command in sed(1).
+  
+  OPTIONS
+   -v,--verbose  produce verbose output on stderr
+   -h,--help     this help
+  
+  RULE EXAMPLES
+  # Replace label '1' with 'ONE' and '42' with 'LTUAE'
+  1:ONE
+  42:LTUAE
+  # Prepend NR to any label that is entirely numeric
+  ([0-9]\\+):NR\\1
+  # Remove suffix starting with first full stop from left
+  ([^/]*)\\..*1
+  # Remove suffix starting with last full stop
+  (.*)\\..*:\\1
+  "
+    exit ${1:-1}
+}
+
+# Newick tree parser
+
+# - Newick BNF syntax (condensed from the overblown Wikipedia entry)
 #   Tree   ::= Branch ';'
 #   Branch ::= ['('Branch [','Branch ...]')'] [name] [':'length]
 
@@ -57,7 +93,7 @@ next_Token() {
     true
 }
 
-# Try and parse next token, which if $1 is given, must equal $1, else false
+# Try and parse next token, which if $1 is given must equal $1
 try_parse() {
     [ $# -ne 1 ] || [ "$TOK" = "$1" ] || return 1
     printf "$TOK"
@@ -85,8 +121,8 @@ opt_parse_Branches() {
     true
 }
 
-opt_parse_Name() {
-    expr "$TOK" : '[^(,):;]*' >/dev/null && printf "$TOK" | sed -re "$EDIT_STRING" && next_Token ||
+opt_parse_Name() { # Note requires SED_PROG to have the s:OLD:NEW: rules
+    expr "$TOK" : '[^(,):;]*' >/dev/null && printf "$TOK" | sed -r -e "$SED_PROG" && next_Token ||
     true
 }
 
@@ -104,44 +140,22 @@ parse_Char() {
     try_parse "$1" || parse_error "expecting '$1'"
 }
 
-# Function to show usage information and exit
-usage_exit() {
-    echo "
-Usage: $(basename "$0") [OPTIONS] [FILE [RULES]]
-
-  Read phylogenetic TREE from Newick format FILE, then apply the rewrite
-  rule from file RULES to the node labels of TREE, and write the resulting
-  Newick tree to standard output.  When RULES is absent or '-', read rules
-  from standard input.  When FILE is absent or '-' read TREE from standard
-  input.
-  
-  RULES must have lines of colon-separated values OLD:NEW.  OLD is an
-  extended regex(7) whose anchored match with any label of the tree is
-  changed to NEW.  By 'anchored' is meant that OLD is interpreted as ^OLD\$,
-  in other words, must match the whole label.  NEW may be any string not 
-  containing characters that Newick disallows (notably (),:;), and may have
-  backreferences \\1..\\9 as with the substitute command in sed(1).
-  
-  OPTIONS
-   -v,--verbose  produce verbose output on stderr
-   -h,--help     this help
-  
-  RULE EXAMPLES
-  # Replace label '42' with 'LTUAE'
-  42:LTUAE
-  # Prepend NR to any label that is entirely numeric
-  ([0-9]\+):NR\1
-  # Remove longest suffix starting with full stop
-  ([^/]*)\..*1
-  # Remove shortest suffix starting with full stop
-  (.*)\..*:\1
-  "
-    exit ${1:-1}
+# Rewrite the multiline string on stdin to a sed program on stdout
+rules_to_sed() {
+    while read -r LINE; do
+        # Ignore empty lines 
+        [ -n "$LINE" ] || continue
+        # Ignore comment lines (starting with '#' and NOT having ':')
+        expr "$LINE" : '#[^:]*$' >/dev/null && continue
+        expr "$LINE" : '.*:' >/dev/null || err_exit "line contains no colon character: $LINE"
+        echo -n "s:^${LINE%%:*}\$:${LINE#*:}:;"
+    done
 }
 
-# Parse options
+# Main
 
-while [ $# -ne 0 -a "$(expr "$1" : '\(.\).*')" = "-" ]; do
+# Parse options
+while [ $# -ne 0 -a "$(expr "$1" : '\(.\)..*')" = "-" ]; do
     case $1 in
     -v|--verbose) VERBOSE=1 ;;
     -h|--help) usage_exit 0 ;;
@@ -150,22 +164,31 @@ while [ $# -ne 0 -a "$(expr "$1" : '\(.\).*')" = "-" ]; do
     shift
 done
 
-# Main
+# Parse and check arguments
+[ $# -le 2 ] || usage_exit
+FILE1="-"
+FILE2="-"
+[ $# -lt 2 ] || FILE2="$2"
+[ $# -lt 1 ] || FILE1="$1"
+[ "$FILE1" != "-" ] || FILE1="/dev/stdin"
+[ "$FILE2" != "-" ] || FILE2="/dev/stdin"
+[ -r "$FILE1" ] || err_exit "cannot read file: $FILE1"
+[ -r "$FILE2" ] || err_exit "cannot read file: $FILE2"
 
-# Read the input file into buf
-[ $# -eq 1 ] || usage_exit
-[ -f "$1" ] || err_exit "no such file: $1"
-BUF="$(cat "$1")"
+# Read the input, handling the case where both are read from same file (stdin),
+# noting that Newick ends at the first ';', so we splice it there.
+if [ "$FILE1" = "$FILE2" ]; then
+    ALL_INPUT="$(cat "$FILE1")"
+    BUF="${ALL_INPUT%%;*};"
+    RULES="${ALL_INPUT#;}"
+    unset ALL_INPUT
+else
+    BUF="$(cat "$FILE1")"
+    RULES="$(cat "$FILE2")"
+fi
 
-# Process the instructions on standard input, appending them to a sed 'program'
-while read LINE; do
-    [ -n "$LINE" ] || continue
-    expr "$LINE" : '.*:' >/dev/null ||
-        err_exit "line contains no colon character: $LINE"
-    OLD="${LINE%%:*}"
-    NEW="${LINE#*:}"
-    EDIT_STRING="${EDIT_STRING:+$EDIT_STRING;}s:^$OLD$:$NEW:"
-done
+# Convert the rules to sed program
+SED_PROG="$(echo "$RULES" | rules_to_sed)"
 
 # Do the actual work
 next_Token

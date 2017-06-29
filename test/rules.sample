@@ -1,0 +1,18 @@
+# Sample rules file for rewrite-newick
+
+# Empty lines are ignored, as well as those starting with '#' but not having a  ':'
+# (which actually means that the previous line IS interpreted as a rule, due to  ^ this,
+#  but very unlikely to match any node in a tree).
+
+# Though you can do all sorts of fancy stuff, such as:
+# remove all suffices starting with solidus (forward slash)
+
+([^/]*)/.*:\1
+
+# In its most basic form this file can be used to simply
+# one-on-one recode every node label:
+
+298:298ABC
+100:C
+119:119MDR
+

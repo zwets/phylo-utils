@@ -1,0 +1,69 @@
+#!/bin/sh
+#
+#  test-relabel-newick - test script for relabel-newick
+#  Copyright (C) 2017  Marco van Zwetselaar <io@zwets.it>
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+#  Home: https://github.com/zwets/phylo-utils
+
+# Function to exit this script with an error message on stderr
+err_exit() {
+    echo "$(basename "$0"): $*" >&2
+    exit 1
+}
+
+# Function to exit this script on parse error
+parse_error() {
+    err_exit "parse error${1:+: $1} at: ${TOK}${BUF}"
+}
+
+# Function to show usage information and exit
+usage_exit() {
+    echo "
+Usage: $(basename "$0")
+
+  Runs some simple tests on relabel-newick
+  "
+    exit ${1:-1}
+}
+
+# Main
+
+# Parse options
+while [ $# -ne 0 -a "$(expr "$1" : '\(.\)..*')" = "-" ]; do
+    case $1 in
+    -h|--help) usage_exit 0 ;;
+    *) usage_exit ;;
+    esac
+    shift
+done
+
+SCRIPT="../relabel-newick"
+[ -x "$SCRIPT" ] || err_exit "no such executable script: ../relabel-newick"
+
+TREE_FILE="tree.newick"
+[ -f "$TREE_FILE" ] || err_exit "no such file: $TREE_FILE"
+
+RULES_FILE="rules.sample"
+[ -f "$RULES_FILE" ] || err_exit "no such file: $RULES_FILE"
+
+# Simplest possible test: do not rewrite at all
+echo "" | "$SCRIPT" "$TREE_FILE" > "/tmp/$(basename "$0").$$"
+diff "$TREE_FILE" "/tmp/$(basename "$0").$$" || err_exit "files should have been identical"
+
+# Test on the tree and rules files
+$SCRIPT "$TREE_FILE" "$RULES_FILE"
+
+# vim: sts=4:sw=4:et:ai:si
