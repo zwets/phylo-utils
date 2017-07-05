@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 #  test-relabel-newick - test script for relabel-newick
 #  Copyright (C) 2017  Marco van Zwetselaar <io@zwets.it>
@@ -36,21 +36,26 @@ TREE_FILE="tree.newick"
 RULES_FILE="rules.sample"
 [ -f "$RULES_FILE" ] || err_exit "no such file: $RULES_FILE"
 
+# Function to exit on failed test
+fail() {
+    echo "FAIL${1:+: $1}" >&2
+    rm -f "$TMP_FILE"
+    exit 1
+}
+
 # Simplest possible test: do not rewrite at all
 echo -n "Test: simplest ... "
-echo "" | "$SCRIPT" "$TREE_FILE" > "$TMP_FILE"
-diff "$TREE_FILE" "$TMP_FILE" || err_exit "simplest test: file not identical to $TREE_FILE: $TMP_FILE"
+echo "" | "$SCRIPT" "$TREE_FILE" > "$TMP_FILE" && cmp -s "$TREE_FILE" "$TMP_FILE" || fail
 echo "OK"
 
 # Testing --extract, should by default give identity mapping
 echo -n "Test: extract ... "
-"$SCRIPT" --extract "$TREE_FILE" | sort -u | "$SCRIPT" "$TREE_FILE" > "$TMP_FILE"
-diff "$TREE_FILE" "$TMP_FILE" || err_exit "extract test: file not identical to $TREE_FILE: $TMP_FILE"
+"$SCRIPT" --extract "$TREE_FILE" | sort -u | "$SCRIPT" "$TREE_FILE" > "$TMP_FILE" && cmp -s "$TREE_FILE" "$TMP_FILE" || fail
 echo "OK"
 
 # Test on the tree and rules files
 echo -n "Test: rewrite ... "
-"$SCRIPT" "$TREE_FILE" "$RULES_FILE" | fgrep -vq '/' || err_exit "rewrite test: output should not contain '/'"
+"$SCRIPT" "$TREE_FILE" "$RULES_FILE" > "$TMP_FILE" && cmp -s "$TMP_FILE" "test.output" || fail "test output does not match test.output"
 echo "OK"
 
 rm -f "$TMP_FILE"

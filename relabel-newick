@@ -24,12 +24,6 @@ err_exit() {
     exit 1
 }
 
-# Debug helper, switch off when all is working
-DEBUG() {
-    return 0
-    #echo "DEBUG: $* when TOK='$TOK'" >&2
-}
-
 # Function to exit this script on parse error
 parse_error() {
     err_exit "parse error${1:+: $1} at: ${TOK}${BUF}"
@@ -64,16 +58,8 @@ Usage: $(basename "$0") [OPTIONS] [FILE [RULES]]
   containing characters that Newick disallows (notably (),:;).  NEW may
   contain back-references \\1..\\9, as with the 's' command in sed(1).
   
-  RULE EXAMPLES
-  # Basic use: replace individual labels using individual rules
-  1:ONE
-  42:LTUAE
-  # Pattern use: strip suffix _XYZ from every label that has it
-  (.*)_XYZ:\\1
-  # Pattern with wildcard: remove any rightmost suffix starting with '_'
-  (.*)_.*:\\1
-  # More advanced matching: prepend NR to any strictly numeric label
-  ([0-9]\\+):NR\\1
+  For EXAMPLES, see sample.rules in the test directory that comes with
+  the source (https://github.com/zwets/phylo-utils).
   "
     exit ${1:-1}
 }
@@ -90,7 +76,6 @@ BUF=""
 
 # Tokeniser - tokens are the five characters ( ) , : , or a sequence of anything else
 next_Token() {
-    DEBUG "next_Token"
     local C="$(expr "$BUF" : '^ *\(.\?\).*')"
     case "$C" in
     '') TOK=''
@@ -110,7 +95,6 @@ next_Token() {
 
 # Try and parse next token, which must equal "$1", or when $1 is "regex" must match "$2".
 try_parse() {
-    DEBUG "try_parse $*"
     [ $# -eq 2 ] && [ "$1" = "regex" ] && [ -n "$2" ] || [ -n "$1" ] || err_exit "PROGRAMMER ERROR"
     [ $# -eq 2 ] && expr "$TOK" : "$2" >/dev/null || [ "$TOK" = "$1" ] || return 1
     [ $EXTRACT ] || printf "$TOK"
@@ -118,61 +102,52 @@ try_parse() {
 }
 
 parse_Tree() {
-    DEBUG "parse_Tree"
     parse_Branch
     parse_Char ';'
 }
 
 parse_Branch() {
-    DEBUG "parse_Branch"
     opt_parse_List
     opt_parse_Name
     opt_parse_Length
 }
 
 opt_parse_List() {
-    DEBUG "opt_parse_List"
     try_parse '(' && parse_Branch && opt_parse_Branches && parse_Char ')' ||
     true
 }
 
 opt_parse_Branches() {
-    DEBUG "opt_parse_Branches"
     try_parse ',' && parse_Branch && opt_parse_Branches ||
     true
 }
 
 opt_parse_Name() { # Note requires SED_PROG to have the s:OLD:NEW: rules
-    DEBUG "opt_parse_Name"
     expr "$TOK" : '[^(,):;]*' >/dev/null && printf "$TOK" | sed -r -e "$SED_PROG" && next_Token ||
     true
 }
 
 opt_parse_Length() {
-    DEBUG "opt_parse_Length"
     try_parse ':' && parse_Length ||
     true
 }
 
 parse_Length() {
-    DEBUG "parse_Length"
     try_parse regex '^\([0-9]\+\(\.[0-9]\+\)\?\)$' || parse_error "expected number"
 }
 
 parse_Char() {
-    DEBUG "parse_Char"
     try_parse "$1" || parse_error "expecting '$1'"
 }
 
 # Rewrite the multiline string on stdin to a sed program on stdout
 rules_to_sed() {
-    DEBUG "rules_to_sed"
     while read -r LINE; do
         # Ignore empty lines 
-        [ -n "$LINE" ] || continue
-        # Ignore comment lines (starting with '#' and NOT having ':')
-        expr "$LINE" : '#[^:]*$' >/dev/null && continue
-        expr "$LINE" : '.*:' >/dev/null || err_exit "line contains no colon character: $LINE"
+        [ -n "$(echo "$LINE" | tr -d ' ')" ] || continue
+        # Ignore comment lines
+        expr "$LINE" : ' *#.*$' >/dev/null && continue
+        [ "$(echo "$LINE" | tr -cd ':')" = ":" ] || err_exit "line must contain exactly one colon character: $LINE"
         echo -n "s:^${LINE%%:*}\$:${LINE#*:}:;"
     done
 }
@@ -200,6 +175,9 @@ FILE2="${2:--}"
 [ -r "$FILE1" ] || err_exit "cannot read file: $FILE1"
 [ $EXTRACT ] || [ -r "$FILE2" ] || err_exit "cannot read file: $FILE2"
 
+# Check that echo preserves backslash sequences; the one in bash should
+[ "$(echo '\1')" = '\1' ] || err_exit "unexpected 'echo' behaviour, please report at https://github.com/zwets/phylo-utils/issues/new"
+
 # Read the input, handling the case where both are read from same file (stdin),
 # noting that Newick ends at the first ';', so we splice it there.
 if [ -z "$EXTRACT" -a "$FILE1" = "$FILE2" ]; then
@@ -218,12 +196,12 @@ if [ $EXTRACT ]; then
     SED_PROG='s/(.*)/\1:\1\n/'
 else
     # Otherwise use the rules_to_sed function to convert the OLD:NEW rules to sed
-    SED_PROG="$(echo "$RULES" | rules_to_sed)"
+    SED_PROG="$(echo "$RULES" | rules_to_sed)" || exit 1
 fi
 
 # Do the actual work
 next_Token
-parse_Tree
+parse_Tree | ([ $EXTRACT ] && sort -u || cat)
 echo
 
 # vim: sts=4:sw=4:et:ai:si

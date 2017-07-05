@@ -11,11 +11,23 @@
 # every node label:
 
 298:A
-100:B
-119:C
+DO14:B
+393:C
 
-# Though you can do all sorts of fancy stuff, such as e.g. removing all suffices
-# that start with solidus (forward slash):
+# To remove labels, use an empty right hand side:
+
+100:
+
+# You can also use patterns to apply the same rule to a different node labels.
+# E.g. strip suffix _XYZ from every label that has it:
+
+(.*)_XYZ:\1
+
+# Note in the previous rule the \1 to back reference the parenthesised match '(.*)'.
+# As another example, remove all suffices that start with solidus (forward slash),
+# and prepend NR to any strictly numeric label:
 
 ([^/]*)/.*:\1
+([0-9]\+):NR\1
 
+# vim: sts=4:sw=4:et:ai:si
