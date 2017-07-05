@@ -1,18 +1,21 @@
-# Sample rules file for rewrite-newick
+# Sample rules file for relabel-newick
 
-# Empty lines are ignored, as well as those starting with '#' but not having a  ':'
-# (which actually means that the previous line IS interpreted as a rule, due to  ^ this,
-#  but very unlikely to match any node in a tree).
+# For format description refer to relabel-newick --help.
 
-# Though you can do all sorts of fancy stuff, such as:
-# remove all suffices starting with solidus (forward slash)
+# Empty lines are ignored, as well as those starting with '#' but not having a ':'
+# (Which actually means that the previous line IS interpreted as a rule, due to ^ this;
+#  but obviously extremely unlikely to match any node as its label would have to be
+#  "# Empty lines are ignored, as well as those starting with '#' but not having a ':'"
+
+# In its most basic usage pattern this file can be used to simply one-on-one recode
+# every node label:
+
+298:A
+100:B
+119:C
+
+# Though you can do all sorts of fancy stuff, such as e.g. removing all suffices
+# that start with solidus (forward slash):
 
 ([^/]*)/.*:\1
-
-# In its most basic form this file can be used to simply
-# one-on-one recode every node label:
-
-298:298ABC
-100:C
-119:119MDR
 

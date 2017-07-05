@@ -24,6 +24,12 @@ err_exit() {
     exit 1
 }
 
+# Debug helper, switch off when all is working
+DEBUG() {
+    return 0
+    #echo "DEBUG: $* when TOK='$TOK'" >&2
+}
+
 # Function to exit this script on parse error
 parse_error() {
     err_exit "parse error${1:+: $1} at: ${TOK}${BUF}"
@@ -34,32 +40,40 @@ usage_exit() {
     echo "
 Usage: $(basename "$0") [OPTIONS] [FILE [RULES]]
 
-  Read phylogenetic TREE from Newick format FILE, apply the rewrite rules
-  from file RULES to the node labels of TREE, and write the resulting tree
-  to standard output.  When RULES is absent or '-', read rules from standard
-  input.  When FILE is absent or '-' read TREE from standard input.
+  Read phylogenetic tree from Newick format FILE, apply the rewrite rules
+  from file RULES to the node labels in the tree, and write the resulting
+  tree to standard output.
   
-  RULES must have lines of colon-separated values OLD:NEW.  OLD is an
-  extended regex(7) whose anchored match with any label of the tree is
-  changed to NEW.  By 'anchored' is meant that OLD is interpreted as ^OLD\$,
-  in other words, it must match the whole label.  NEW may be any string not 
-  containing characters that Newick disallows (notably (),:;), and may have
-  backreferences \\1..\\9 as with the substitute command in sed(1).
+  With option --extract do not apply rewrite rules, but instead extract
+  all node labels from FILE, producing on standard output a list of
+  default rules that can be used as the basis for a RULES file.
+  
+  When RULES is absent or '-', read rules from standard input.  When FILE
+  is absent or '-', read tree from standard input.  With --extract, no
+  RULES argument must be given.
   
   OPTIONS
+   -x,--extract  extract to stdout a template rule for each node in FILE
    -v,--verbose  produce verbose output on stderr
    -h,--help     this help
   
+  RULES must have lines of colon-separated values OLD:NEW.  OLD is an
+  extended regex(7) whose anchored match with any label of the tree is
+  changed to NEW.  By 'anchored' is meant that OLD is interpreted as ^OLD\$
+  i.e. matched end-to-end against the label.  NEW may be any string not
+  containing characters that Newick disallows (notably (),:;).  NEW may
+  contain back-references \\1..\\9, as with the 's' command in sed(1).
+  
   RULE EXAMPLES
-  # Replace label '1' with 'ONE' and '42' with 'LTUAE'
+  # Basic use: replace individual labels using individual rules
   1:ONE
   42:LTUAE
-  # Prepend NR to any label that is entirely numeric
+  # Pattern use: strip suffix _XYZ from every label that has it
+  (.*)_XYZ:\\1
+  # Pattern with wildcard: remove any rightmost suffix starting with '_'
+  (.*)_.*:\\1
+  # More advanced matching: prepend NR to any strictly numeric label
   ([0-9]\\+):NR\\1
-  # Remove suffix starting with first full stop from left
-  ([^/]*)\\..*1
-  # Remove suffix starting with last full stop
-  (.*)\\..*:\\1
   "
     exit ${1:-1}
 }
@@ -76,6 +90,7 @@ BUF=""
 
 # Tokeniser - tokens are the five characters ( ) , : , or a sequence of anything else
 next_Token() {
+    DEBUG "next_Token"
     local C="$(expr "$BUF" : '^ *\(.\?\).*')"
     case "$C" in
     '') TOK=''
@@ -93,55 +108,65 @@ next_Token() {
     true
 }
 
-# Try and parse next token, which if $1 is given must equal $1
+# Try and parse next token, which must equal "$1", or when $1 is "regex" must match "$2".
 try_parse() {
-    [ $# -ne 1 ] || [ "$TOK" = "$1" ] || return 1
-    printf "$TOK"
+    DEBUG "try_parse $*"
+    [ $# -eq 2 ] && [ "$1" = "regex" ] && [ -n "$2" ] || [ -n "$1" ] || err_exit "PROGRAMMER ERROR"
+    [ $# -eq 2 ] && expr "$TOK" : "$2" >/dev/null || [ "$TOK" = "$1" ] || return 1
+    [ $EXTRACT ] || printf "$TOK"
     next_Token
 }
 
 parse_Tree() {
+    DEBUG "parse_Tree"
     parse_Branch
     parse_Char ';'
 }
 
 parse_Branch() {
+    DEBUG "parse_Branch"
     opt_parse_List
     opt_parse_Name
     opt_parse_Length
 }
 
 opt_parse_List() {
+    DEBUG "opt_parse_List"
     try_parse '(' && parse_Branch && opt_parse_Branches && parse_Char ')' ||
     true
 }
 
 opt_parse_Branches() {
+    DEBUG "opt_parse_Branches"
     try_parse ',' && parse_Branch && opt_parse_Branches ||
     true
 }
 
 opt_parse_Name() { # Note requires SED_PROG to have the s:OLD:NEW: rules
+    DEBUG "opt_parse_Name"
     expr "$TOK" : '[^(,):;]*' >/dev/null && printf "$TOK" | sed -r -e "$SED_PROG" && next_Token ||
     true
 }
 
 opt_parse_Length() {
+    DEBUG "opt_parse_Length"
     try_parse ':' && parse_Length ||
     true
 }
 
 parse_Length() {
-    expr "$TOK" : '^\([0-9]\+\(\.[0-9]\+\)\?\)$' >/dev/null && printf "$TOK" && next_Token ||
-    parse_error "expected number"
+    DEBUG "parse_Length"
+    try_parse regex '^\([0-9]\+\(\.[0-9]\+\)\?\)$' || parse_error "expected number"
 }
 
 parse_Char() {
+    DEBUG "parse_Char"
     try_parse "$1" || parse_error "expecting '$1'"
 }
 
 # Rewrite the multiline string on stdin to a sed program on stdout
 rules_to_sed() {
+    DEBUG "rules_to_sed"
     while read -r LINE; do
         # Ignore empty lines 
         [ -n "$LINE" ] || continue
@@ -155,8 +180,10 @@ rules_to_sed() {
 # Main
 
 # Parse options
+unset VERBOSE EXTRACT
 while [ $# -ne 0 -a "$(expr "$1" : '\(.\)..*')" = "-" ]; do
     case $1 in
+    -x|--extract) EXTRACT=1 ;;
     -v|--verbose) VERBOSE=1 ;;
     -h|--help) usage_exit 0 ;;
     *) usage_exit ;;
@@ -165,30 +192,34 @@ while [ $# -ne 0 -a "$(expr "$1" : '\(.\)..*')" = "-" ]; do
 done
 
 # Parse and check arguments
-[ $# -le 2 ] || usage_exit
-FILE1="-"
-FILE2="-"
-[ $# -lt 2 ] || FILE2="$2"
-[ $# -lt 1 ] || FILE1="$1"
+[ $EXTRACT ] && [ $# -le 1 ] || [ $# -le 2 ] || usage_exit
+FILE1="${1:--}"
+FILE2="${2:--}"
 [ "$FILE1" != "-" ] || FILE1="/dev/stdin"
 [ "$FILE2" != "-" ] || FILE2="/dev/stdin"
 [ -r "$FILE1" ] || err_exit "cannot read file: $FILE1"
-[ -r "$FILE2" ] || err_exit "cannot read file: $FILE2"
+[ $EXTRACT ] || [ -r "$FILE2" ] || err_exit "cannot read file: $FILE2"
 
 # Read the input, handling the case where both are read from same file (stdin),
 # noting that Newick ends at the first ';', so we splice it there.
-if [ "$FILE1" = "$FILE2" ]; then
+if [ -z "$EXTRACT" -a "$FILE1" = "$FILE2" ]; then
     ALL_INPUT="$(cat "$FILE1")"
     BUF="${ALL_INPUT%%;*};"
     RULES="${ALL_INPUT#;}"
     unset ALL_INPUT
 else
     BUF="$(cat "$FILE1")"
-    RULES="$(cat "$FILE2")"
+    [ $EXTRACT ] || RULES="$(cat "$FILE2")"
 fi
 
-# Convert the rules to sed program
-SED_PROG="$(echo "$RULES" | rules_to_sed)"
+# Create the sed program that will be used to convert OLD to NEW labels
+if [ $EXTRACT ]; then
+    # When extracting, each node label "N" is rewritten to identity rule "N:N"
+    SED_PROG='s/(.*)/\1:\1\n/'
+else
+    # Otherwise use the rules_to_sed function to convert the OLD:NEW rules to sed
+    SED_PROG="$(echo "$RULES" | rules_to_sed)"
+fi
 
 # Do the actual work
 next_Token

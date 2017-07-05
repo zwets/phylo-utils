@@ -18,37 +18,14 @@
 #
 #  Home: https://github.com/zwets/phylo-utils
 
+TMP_FILE="$(mktemp)"
+
 # Function to exit this script with an error message on stderr
 err_exit() {
     echo "$(basename "$0"): $*" >&2
+    [ ! -f "$TMP_FILE" ] || rm -f "$TMP_FILE"
     exit 1
 }
-
-# Function to exit this script on parse error
-parse_error() {
-    err_exit "parse error${1:+: $1} at: ${TOK}${BUF}"
-}
-
-# Function to show usage information and exit
-usage_exit() {
-    echo "
-Usage: $(basename "$0")
-
-  Runs some simple tests on relabel-newick
-  "
-    exit ${1:-1}
-}
-
-# Main
-
-# Parse options
-while [ $# -ne 0 -a "$(expr "$1" : '\(.\)..*')" = "-" ]; do
-    case $1 in
-    -h|--help) usage_exit 0 ;;
-    *) usage_exit ;;
-    esac
-    shift
-done
 
 SCRIPT="../relabel-newick"
 [ -x "$SCRIPT" ] || err_exit "no such executable script: ../relabel-newick"
@@ -60,10 +37,23 @@ RULES_FILE="rules.sample"
 [ -f "$RULES_FILE" ] || err_exit "no such file: $RULES_FILE"
 
 # Simplest possible test: do not rewrite at all
-echo "" | "$SCRIPT" "$TREE_FILE" > "/tmp/$(basename "$0").$$"
-diff "$TREE_FILE" "/tmp/$(basename "$0").$$" || err_exit "files should have been identical"
+echo -n "Test: simplest ... "
+echo "" | "$SCRIPT" "$TREE_FILE" > "$TMP_FILE"
+diff "$TREE_FILE" "$TMP_FILE" || err_exit "simplest test: file not identical to $TREE_FILE: $TMP_FILE"
+echo "OK"
+
+# Testing --extract, should by default give identity mapping
+echo -n "Test: extract ... "
+"$SCRIPT" --extract "$TREE_FILE" | sort -u | "$SCRIPT" "$TREE_FILE" > "$TMP_FILE"
+diff "$TREE_FILE" "$TMP_FILE" || err_exit "extract test: file not identical to $TREE_FILE: $TMP_FILE"
+echo "OK"
 
 # Test on the tree and rules files
-$SCRIPT "$TREE_FILE" "$RULES_FILE"
+echo -n "Test: rewrite ... "
+"$SCRIPT" "$TREE_FILE" "$RULES_FILE" | fgrep -vq '/' || err_exit "rewrite test: output should not contain '/'"
+echo "OK"
+
+rm -f "$TMP_FILE"
+exit 0
 
 # vim: sts=4:sw=4:et:ai:si
