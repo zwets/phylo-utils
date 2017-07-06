@@ -18,7 +18,7 @@
 #
 #  Home: https://github.com/zwets/phylo-utils
 
-TMP_FILE="$(mktemp)"
+TMP_FILE="$(mktemp "$(basename "$0").XXXXXX")"
 
 # Function to exit this script with an error message on stderr
 err_exit() {

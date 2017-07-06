@@ -18,6 +18,8 @@
 #
 #  Home: https://github.com/zwets/phylo-utils
 
+# Globals
+
 # Function to exit this script with an error message on stderr
 err_exit() {
     echo "$(basename "$0"): $*" >&2
@@ -27,6 +29,12 @@ err_exit() {
 # Function to exit this script on parse error
 parse_error() {
     err_exit "parse error${1:+: $1} at: ${TOK}${BUF}"
+}
+
+# Debug utility, uncomment out when needed
+DEBUG() {
+    #echo "DEBUG: ${1:+$1 }(TOK='$TOK')(BUF='$(expr substr "$BUF" 1 12)...')" >&2
+    return 0
 }
 
 # Function to show usage information and exit
@@ -74,20 +82,24 @@ Usage: $(basename "$0") [OPTIONS] [FILE [RULES]]
 TOK=""
 BUF=""
 
+# Set the global sed options, taking into account platform differences
+SED_OPT="-re"
+sed --version 2>/dev/null | grep -Fq 'GNU' || SED_OPT="-Ee"
+
 # Tokeniser - tokens are the five characters ( ) , : , or a sequence of anything else
 next_Token() {
-    local C="$(expr "$BUF" : '^ *\(.\?\).*')"
+    local C="$(echo "$BUF" | sed $SED_OPT 's/^ *(.?).*$/\1/')"
     case "$C" in
     '') TOK=''
         BUF=''
         ;;
     '('|','|')'|':'|';')
         TOK="$C"
-        BUF="$(expr "$BUF" : '^ *.\(.*\)')"
+        BUF="$(echo "$BUF" | sed $SED_OPT 's/^ *.(.*)$/\1/')"
         ;;
     *)
-        TOK="$(expr "$BUF" : '^ *\([^(,):;]\+\).*')"
-        BUF="$(expr "$BUF" : '^ *[^(,):;]\+\(.*\)')"
+        TOK="$(echo "$BUF" | sed $SED_OPT 's/^ *([^(,):;]+)[(,):;]?.*$/\1/')"
+        BUF="$(echo "$BUF" | sed $SED_OPT 's/^ *[^(,):;]+(.*)$/\1/')"
         ;;
     esac
     true
@@ -96,7 +108,7 @@ next_Token() {
 # Try and parse next token, which must equal "$1", or when $1 is "regex" must match "$2".
 try_parse() {
     [ $# -eq 2 ] && [ "$1" = "regex" ] && [ -n "$2" ] || [ -n "$1" ] || err_exit "PROGRAMMER ERROR"
-    [ $# -eq 2 ] && expr "$TOK" : "$2" >/dev/null || [ "$TOK" = "$1" ] || return 1
+    [ $# -eq 2 ] && echo "$TOK" | grep -Eq "$2" || [ "$TOK" = "$1" ] || return 1
     [ $EXTRACT ] || printf "$TOK"
     next_Token
 }
@@ -122,8 +134,8 @@ opt_parse_Branches() {
     true
 }
 
-opt_parse_Name() { # Note requires SED_PROG to have the s:OLD:NEW: rules
-    expr "$TOK" : '[^(,):;]*' >/dev/null && printf "$TOK" | sed -r -e "$SED_PROG" && next_Token ||
+opt_parse_Name() { # Note requires REWRITE_CMD to have the s:OLD:NEW: rules
+    echo "$TOK" | grep -q '^[^(,):;]' && printf "$TOK" | sed $SED_OPT "$REWRITE_CMD" && next_Token ||
     true
 }
 
@@ -133,7 +145,7 @@ opt_parse_Length() {
 }
 
 parse_Length() {
-    try_parse regex '^\([0-9]\+\(\.[0-9]\+\)\?\)$' || parse_error "expected number"
+    try_parse regex '^([0-9]+(\.[0-9]+)?)$' || parse_error "expected number"
 }
 
 parse_Char() {
@@ -146,7 +158,7 @@ rules_to_sed() {
         # Ignore empty lines 
         [ -n "$(echo "$LINE" | tr -d ' ')" ] || continue
         # Ignore comment lines
-        expr "$LINE" : ' *#.*$' >/dev/null && continue
+        echo "$LINE" | grep -Eq '^ *#' && continue
         [ "$(echo "$LINE" | tr -cd ':')" = ":" ] || err_exit "line must contain exactly one colon character: $LINE"
         echo -n "s:^${LINE%%:*}\$:${LINE#*:}:;"
     done
@@ -178,6 +190,10 @@ FILE2="${2:--}"
 # Check that echo preserves backslash sequences; the one in bash should
 [ "$(echo '\1')" = '\1' ] || err_exit "unexpected 'echo' behaviour, please report at https://github.com/zwets/phylo-utils/issues/new"
 
+# Check whether we have GNU or other sed and set SED_OPT appropriately for extended expressions
+SED_OPT="-re"
+sed --version 2>/dev/null | grep -Fq 'GNU' || SED_OPT="-Ee"
+
 # Read the input, handling the case where both are read from same file (stdin),
 # noting that Newick ends at the first ';', so we splice it there.
 if [ -z "$EXTRACT" -a "$FILE1" = "$FILE2" ]; then
@@ -190,13 +206,13 @@ else
     [ $EXTRACT ] || RULES="$(cat "$FILE2")"
 fi
 
-# Create the sed program that will be used to convert OLD to NEW labels
+# Create the rewrite command that will be used by sed to convert OLD to NEW labels
 if [ $EXTRACT ]; then
     # When extracting, each node label "N" is rewritten to identity rule "N:N"
-    SED_PROG='s/(.*)/\1:\1\n/'
+    REWRITE_CMD='s/(.*)/\1:\1\n/'
 else
     # Otherwise use the rules_to_sed function to convert the OLD:NEW rules to sed
-    SED_PROG="$(echo "$RULES" | rules_to_sed)" || exit 1
+    REWRITE_CMD="$(echo "$RULES" | rules_to_sed)" || exit 1
 fi
 
 # Do the actual work
