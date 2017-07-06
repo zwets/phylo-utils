@@ -135,7 +135,11 @@ opt_parse_Branches() {
 }
 
 opt_parse_Name() { # Note requires REWRITE_CMD to have the s:OLD:NEW: rules
-    echo "$TOK" | grep -q '^[^(,):;]' && printf "$TOK" | sed $SED_OPT "$REWRITE_CMD" && next_Token ||
+    if echo "$TOK" | grep -q '^[^(,):;]'; then
+        local OUT="$(printf "$TOK" | sed $SED_OPT "$REWRITE_CMD")"
+        echo ${EXTRACT:--n} "$OUT"
+        next_Token
+    fi
     true
 }
 
@@ -209,7 +213,7 @@ fi
 # Create the rewrite command that will be used by sed to convert OLD to NEW labels
 if [ $EXTRACT ]; then
     # When extracting, each node label "N" is rewritten to identity rule "N:N"
-    REWRITE_CMD='s/(.*)/\1:\1\n/'
+    REWRITE_CMD='s/(.*)/\1:\1/'
 else
     # Otherwise use the rules_to_sed function to convert the OLD:NEW rules to sed
     REWRITE_CMD="$(echo "$RULES" | rules_to_sed)" || exit 1
