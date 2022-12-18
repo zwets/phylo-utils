@@ -149,7 +149,7 @@ opt_parse_Length() {
 }
 
 parse_Length() {
-    try_parse regex '^([0-9]+(\.[0-9]+)?(e-?[0-9]+)?)$' || parse_error "expected number"
+    try_parse regex '^([0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?)$' || parse_error "expected number"
 }
 
 parse_Char() {
