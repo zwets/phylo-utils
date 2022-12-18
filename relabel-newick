@@ -97,6 +97,10 @@ next_Token() {
         TOK="$C"
         BUF="$(echo "$BUF" | sed $SED_OPT 's/^ *.(.*)$/\1/')"
         ;;
+    "'")
+        TOK="$(echo "$BUF" | sed $SED_OPT "s/^ *('[^']+').*\$/\1/")"
+        BUF="$(echo "$BUF" | sed $SED_OPT "s/^ *'[^']+'(.*)\$/\1/")"
+        ;;
     *)
         TOK="$(echo "$BUF" | sed $SED_OPT 's/^ *([^(,):;]+)[(,):;]?.*$/\1/')"
         BUF="$(echo "$BUF" | sed $SED_OPT 's/^ *[^(,):;]+(.*)$/\1/')"
